@@ -1,0 +1,48 @@
+name: measure-nesting
+
+on:
+  workflow_dispatch:
+
+jobs:
+  measure:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Free up disk space
+        run: sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential flex bison bc libssl-dev libelf-dev libncurses-dev \
+            wget tar bzip2 cpio gzip e2fsprogs fakeroot qemu-utils
+
+      - name: Cache downloads
+        uses: actions/cache@v4
+        with:
+          path: dl_cache
+          key: rezzos-dl-${{ hashFiles('build.sh') }}
+          restore-keys: rezzos-dl-
+
+      - name: Cache compiled kernel
+        uses: actions/cache@v4
+        with:
+          path: bzImage
+          key: rezzos-bzImage-${{ hashFiles('build.sh') }}
+
+      - name: Build three times and measure
+        run: |
+          chmod +x build.sh
+          for n in 1 2 3; do
+            ./build.sh > "build$n.log" 2>&1 || { tail -30 "build$n.log"; exit 1; }
+            size=$(stat -c%s rootfs.cpio.gz)
+            nested=$(stat -c%s busybox-1.36.1/_install/boot/rootfs.cpio.gz 2>/dev/null || echo 0)
+            printf 'build %s: rootfs.cpio.gz = %s bytes (%s MiB), nested copy carried in = %s bytes\n' \
+              "$n" "$size" "$((size / 1048576))" "$nested"
+          done
+
+          echo "--- what is actually inside boot/ in the final image ---"
+          ls -la busybox-1.36.1/_install/boot/
