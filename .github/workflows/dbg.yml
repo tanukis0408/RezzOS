@@ -32,6 +32,9 @@ jobs:
           path: bzImage
           key: rezzos-bzImage-${{ hashFiles('build.sh') }}
 
+      - name: Confirm the branch really carries the fix
+        run: grep -n "sed 's#\^\\./##' | grep -qx 'init'" usr/bin/rezz-mkinitrd
+
       - name: Build
         run: chmod +x build.sh && ./build.sh > b.log 2>&1 || { tail -40 b.log; exit 1; }
 
@@ -43,11 +46,11 @@ jobs:
           exec >/dev/console 2>&1
           sleep 8
           mkdir -p /mnt/disk/out
-          if /usr/bin/rezz-mkinitrd /mnt/disk/out/new.cpio.gz; then
-            echo "MK ok"
-          else
-            echo "MK FAILED"
-          fi
+          # Capture to the disk as well as the console. The console has been
+          # dropping this tool's output, and the log has to survive either way.
+          sh -x /usr/bin/rezz-mkinitrd /mnt/disk/out/new.cpio.gz > /mnt/disk/out/log.txt 2>&1
+          echo "MK rc=$?"
+          sed 's/^/MKLOG /' /mnt/disk/out/log.txt | tail -45
           ls -la /mnt/disk/out/ | sed 's/^/MK /'
           sync
           echo "MK DONE"
@@ -61,8 +64,9 @@ jobs:
           timeout 300 qemu-system-x86_64 -kernel bzImage -initrd b1.cpio.gz -append "console=ttyS0 random.trust_cpu=on" -drive file=disk.img,format=raw,if=virtio -m 1024M -display none -no-reboot -serial file:s1.log || true
 
           tr -d '\r' < s1.log > s1.txt
-          grep "^MK" s1.txt || { echo "no report from the guest"; tail -25 s1.txt; exit 1; }
-          grep -q "^MK ok" s1.txt || { echo "::error::rezz-mkinitrd failed"; exit 1; }
+          echo "=========== WHAT THE GUEST DID ==========="
+          grep -E "^MK|^MKLOG" s1.txt || { echo "nothing at all"; tail -30 s1.txt; exit 1; }
+          grep -q "^MK rc=0" s1.txt || { echo "::error::rezz-mkinitrd failed"; exit 1; }
 
       - name: Take that image off the disk
         run: |
@@ -72,7 +76,6 @@ jobs:
           sudo umount mnt
           sudo chown "$USER" new.cpio.gz
           echo "image the guest built: $(stat -c%s new.cpio.gz) bytes"
-          echo "top of its contents:"
           gzip -dc new.cpio.gz | cpio -t 2>/dev/null | head -5
 
       - name: Boot 2, from the image the guest built
@@ -86,7 +89,7 @@ jobs:
           check supervisor 'pidof runsvdir'
           check bash       'bash -c "exit 0"'
           check pkg        'test -x /usr/bin/pkg'
-          check mkinitrd   'test -x /usr/bin/rezz-mkinitrd'
+          check doctor     'test -x /usr/bin/rezz-doctor'
           check disk       'grep -q " /mnt/disk " /proc/mounts'
           echo "RT DONE"
           exec sleep 3600
