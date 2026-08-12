@@ -1,7 +1,8 @@
 name: measure-nesting
 
 on:
-  workflow_dispatch:
+  push:
+    branches: [experiment/measure-nesting]
 
 jobs:
   measure:
